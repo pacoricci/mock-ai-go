@@ -1,0 +1,1480 @@
+openapi: 3.0.3
+info:
+  title: mock-ai-go API
+  description: |
+    Deterministic text generation, synthetic embeddings, and synthetic function
+    calling through OpenAI-compatible APIs and Anthropic Messages.
+    SSE defaults to an 800 ms initial delay and 100 ms between content chunks with
+    uniform jitter of plus or minus 20 ms. Configure SSE_INITIAL_DELAY, SSE_DELAY,
+    and SSE_DELAY_JITTER on the server; set all three to 0s to disable pacing.
+    Non-streaming JSON responses do not simulate generation latency.
+  version: 1.6.0
+servers:
+  - url: http://localhost:8080
+    description: Local server
+paths:
+  /v1/embeddings:
+    post:
+      summary: Create deterministic synthetic embeddings
+      operationId: createEmbeddings
+      description: |
+        Accepts strings only; token ID arrays and unknown fields are rejected.
+        The separate EMBEDDING_MODEL_ID defaults to mock-embedding-model.
+        EMBEDDING_DIMENSIONS defaults to 1536 and can be configured up to 4096.
+        Requested dimensions cannot exceed that configured default.
+        Vectors are unit-normalized float32 values with no semantic meaning,
+        stable across batches, concurrency, and restarts. Base64 encodes the same
+        values in little-endian order. There is no streaming or pacing.
+        Limits are 1 MiB per body, 2048 inputs, 32768 UTF-8 bytes per input, and
+        1048576 total output components. A bad input rejects the whole batch.
+        Usage is the sum of ceil(UTF-8 bytes / 4), not real tokenizer accounting.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmbeddingRequest'
+            example:
+              model: mock-embedding-model
+              input: [Hello, World]
+              dimensions: 256
+      responses:
+        '200':
+          description: Embeddings in the same order as the inputs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbeddingResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          $ref: '#/components/responses/ModelNotFound'
+        '405':
+          description: Method not allowed.
+  /v1/messages:
+    post:
+      summary: Create an Anthropic-compatible text or tool message
+      operationId: createAnthropicMessage
+      description: |
+        Implements the documented Messages subset with the shared model registry.
+        Requires anthropic-version 2023-06-01; beta headers are unsupported.
+        API keys are ignored. The body limit is 1 MiB. Unknown fields are rejected.
+        Text produces exactly max_tokens simulated words and stops with max_tokens.
+        Tools stop with tool_use. Insufficient tool budgets return 400 before SSE;
+        partial tool JSON is not generated. Usage is a mock estimate.
+        Auto selects text after tool results. Histories must start/end with user;
+        every tool call requires a matching result in the following user turn.
+        Thinking, multimodal content, cache controls, prefill, strict tool schemas,
+        server tools, and nonempty stop_sequences are unsupported.
+        SSE emits message_start, indexed content_block_start/delta/stop events,
+        message_delta with cumulative usage, and message_stop, without [DONE].
+        Model failures after streaming starts emit error instead of message_stop.
+      parameters:
+        - in: header
+          name: anthropic-version
+          required: true
+          schema:
+            type: string
+            enum: ['2023-06-01']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnthropicMessageRequest'
+            example:
+              model: mock-chat-model
+              max_tokens: 32
+              messages:
+                - role: user
+                  content: Hello
+      responses:
+        '200':
+          description: A message or an Anthropic SSE event stream.
+          headers:
+            request-id:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnthropicMessage'
+            text/event-stream:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/AnthropicError'
+        '404':
+          $ref: '#/components/responses/AnthropicError'
+        '405':
+          $ref: '#/components/responses/AnthropicError'
+        '413':
+          $ref: '#/components/responses/AnthropicError'
+        '500':
+          $ref: '#/components/responses/AnthropicError'
+  /v1/chat/completions:
+    post:
+      summary: Create a chat completion or deterministic function call
+      description: |
+        Uses the shared deterministic text and function planner. Tools use nested
+        function definitions. Selection supports none, auto, required, and a named
+        function; parallel calls default to enabled. Function calls are returned,
+        never executed. Tool argument JSON Schema support is best-effort, including
+        when strict is supplied. Legacy functions and function_call fields return HTTP 400.
+        Replay assistant tool_calls and matching role=tool messages for follow-up.
+        Unknown or duplicate result IDs and results before calls return HTTP 400.
+        Streaming emits indexed delta.tool_calls argument fragments, a tool_calls
+        finish reason, optional final usage, and [DONE]. Arguments are UTF-8-safe
+        and use the configured initial delay, gap delay, jitter, and chunk size
+        (approximately four bytes per configured token).
+        response_format supports text, json_object, and json_schema. Structured text
+        uses a validated bounded schema subset described in structured-output.md.
+        Its token ceiling uses approximately four UTF-8 bytes per token; truncation
+        returns HTTP 200 with partial content and finish_reason length in JSON or SSE.
+        Invalid or unsupported schemas return HTTP 400 before SSE starts.
+      operationId: createChatCompletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+            example:
+              model: mock-chat-model
+              messages:
+                - role: user
+                  content: Hello
+              max_completion_tokens: 16
+              seed: 42
+      responses:
+        '200':
+          description: A non-streaming chat completion or an SSE stream.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                data: {"id":"chatcmpl-mock-1","object":"chat.completion.chunk","created":1700000000,"model":"mock-chat-model","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+                data: [DONE]
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          $ref: '#/components/responses/ModelNotFound'
+        '500':
+          $ref: '#/components/responses/ModelFailure'
+  /v1/responses:
+    post:
+      summary: Create a text response or deterministic function call
+      description: |
+        Implements the synchronous JSON and SSE text and function-tool subset of Open Responses.
+        Both modes use the same deterministic model as Chat Completions.
+
+        Function calls are returned but never executed. `tool_choice` supports `none`,
+        `auto`, and `required`; auto uses a stable 50/50 text/tool distribution when
+        tools are present. Function arguments implement a pragmatic JSON Schema subset
+        and returned tool definitions report `strict: false`.
+
+        Ordered message, function-call, function-call-output, and supplied reasoning
+        items contribute to a fixed-size conversation digest. The mock does not generate
+        reasoning output. Non-text content, sampling controls,
+        background execution, cache controls, and service-tier selection are accepted
+        as no-ops.
+
+        text.format supports text, json_object, and json_schema; see structured-output.md
+        for schema constraints and limits. Structured budgets use approximately four
+        UTF-8 bytes per token. Exhaustion returns partial text with status incomplete,
+        incomplete_details.reason max_output_tokens, and a response.incomplete SSE
+        terminal event. Invalid schemas return HTTP 400 before SSE starts.
+
+        `previous_response_id` is an opaque 128-bit identifier for an immutable terminal
+        Response snapshot in the process-local bounded memory store. The snapshot carries
+        the model ID, the aggregate context digest and token estimate, and emitted
+        function-call IDs; input and output text are not retained. Instructions apply
+        only to the current generation and are not inherited. The model must match.
+
+        `store` defaults to true. With `store: false`, no snapshot is saved and the returned
+        ID cannot be continued. Malformed IDs and model mismatches return
+        `invalid_value`. Well-formed IDs that are absent, expired, evicted, or lost on
+        restart return `previous_response_not_found`. Failed, cancelled, and interrupted
+        streams are not stored. Compaction, retrieval, WebSocket transport, persistence,
+        and multi-replica continuation are not implemented.
+      operationId: createResponse
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResponseRequest'
+            examples:
+              stringInput:
+                summary: String input
+                value:
+                  model: mock-chat-model
+                  instructions: Be concise.
+                  input: Hello
+                  max_output_tokens: 16
+                  metadata:
+                    test: openresponses
+              messageInput:
+                summary: Message input
+                value:
+                  model: mock-chat-model
+                  input:
+                    - type: message
+                      role: system
+                      content: Answer plainly.
+                    - type: message
+                      role: user
+                      content:
+                        - type: input_text
+                          text: Hello
+                  max_output_tokens: 16
+                  stream: true
+              functionCall:
+                summary: Required function call
+                value:
+                  model: mock-chat-model
+                  input: What is the weather in Rome?
+                  tool_choice: required
+                  parallel_tool_calls: false
+                  tools:
+                    - type: function
+                      name: get_weather
+                      description: Get the current weather for a location
+                      parameters:
+                        type: object
+                        properties:
+                          location:
+                            type: string
+                        required:
+                          - location
+              continuation:
+                summary: Continue a process-local stored Response
+                value:
+                  model: mock-chat-model
+                  previous_response_id: resp_mock_0123456789abcdef0123456789abcdef
+                  input: Continue with the next turn.
+                  max_output_tokens: 16
+      responses:
+        '200':
+          description: A complete or token-truncated Response resource, or an Open Responses SSE stream.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseResource'
+              example:
+                id: resp_mock_0123456789abcdef0123456789abcdef
+                object: response
+                created_at: 1700000000
+                completed_at: 1700000000
+                status: completed
+                incomplete_details: null
+                model: mock-chat-model
+                previous_response_id: null
+                instructions: Be concise.
+                output:
+                  - id: msg-mock-1
+                    type: message
+                    status: completed
+                    role: assistant
+                    content:
+                      - type: output_text
+                        text: amber orbit
+                        annotations: []
+                error: null
+                tools: []
+                tool_choice: auto
+                truncation: disabled
+                parallel_tool_calls: true
+                text:
+                  format:
+                    type: text
+                top_p: 1
+                presence_penalty: 0
+                frequency_penalty: 0
+                top_logprobs: 0
+                temperature: 1
+                reasoning: null
+                usage:
+                  input_tokens: 16
+                  input_tokens_details:
+                    cached_tokens: 0
+                  output_tokens: 2
+                  output_tokens_details:
+                    reasoning_tokens: 0
+                  total_tokens: 18
+                max_output_tokens: 16
+                max_tool_calls: null
+                store: true
+                background: false
+                service_tier: default
+                metadata:
+                  test: openresponses
+                safety_identifier: null
+                prompt_cache_key: null
+            text/event-stream:
+              schema:
+                type: string
+              description: |
+                Text responses emit output-text lifecycle events. Function calls emit
+                output-item events plus `response.function_call_arguments.delta` and
+                `response.function_call_arguments.done`, followed by `response.completed`
+                (or `response.incomplete` for structured text truncated by its token ceiling)
+                and `[DONE]`.
+              example: |
+                event: response.created
+                data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_mock_0123456789abcdef0123456789abcdef","object":"response","status":"in_progress"}}
+
+                event: response.output_text.delta
+                data: {"type":"response.output_text.delta","sequence_number":4,"item_id":"msg-mock-1","output_index":0,"content_index":0,"delta":"amber "}
+
+                event: response.completed
+                data: {"type":"response.completed","sequence_number":9,"response":{"id":"resp_mock_0123456789abcdef0123456789abcdef","object":"response","status":"completed"}}
+
+                data: [DONE]
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          $ref: '#/components/responses/ModelNotFound'
+        '500':
+          $ref: '#/components/responses/ModelFailure'
+components:
+  responses:
+    AnthropicError:
+      description: |
+        Anthropic error envelope. Invalid or unsupported requests return 400;
+        unknown models/subpaths return 404; wrong methods return 405 with Allow POST;
+        oversized bodies return 413; model failures before SSE return 500.
+      headers:
+        request-id:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [type, error, request_id]
+            properties:
+              type:
+                type: string
+                enum: [error]
+              error:
+                type: object
+                required: [type, message]
+                properties:
+                  type:
+                    type: string
+                    enum: [invalid_request_error, not_found_error, request_too_large, api_error]
+                  message:
+                    type: string
+              request_id:
+                type: string
+    InvalidRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ModelNotFound:
+      description: The requested model does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ModelFailure:
+      description: The model failed to generate output or the terminal Response could not be stored.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    EmbeddingRequest:
+      type: object
+      additionalProperties: false
+      required: [model, input]
+      properties:
+        model:
+          type: string
+          minLength: 1
+          example: mock-embedding-model
+        input:
+          description: Nonempty strings, each at most 32768 UTF-8 bytes. Whitespace is preserved.
+          oneOf:
+            - type: string
+              minLength: 1
+            - type: array
+              minItems: 1
+              maxItems: 2048
+              items:
+                type: string
+                minLength: 1
+        dimensions:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 4096
+          description: Defaults to the configured length and cannot exceed it.
+        encoding_format:
+          type: string
+          nullable: true
+          enum: [float, base64, null]
+          default: float
+        user:
+          type: string
+          nullable: true
+          description: Accepted and ignored.
+    EmbeddingResponse:
+      type: object
+      required: [object, data, model, usage]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        model:
+          type: string
+        data:
+          type: array
+          items:
+            type: object
+            required: [object, index, embedding]
+            properties:
+              object:
+                type: string
+                enum: [embedding]
+              index:
+                type: integer
+                minimum: 0
+              embedding:
+                oneOf:
+                  - type: array
+                    minItems: 1
+                    maxItems: 4096
+                    items:
+                      type: number
+                      format: float
+                  - type: string
+                    format: byte
+                    description: Base64-encoded little-endian float32 components.
+        usage:
+          type: object
+          required: [prompt_tokens, total_tokens]
+          properties:
+            prompt_tokens:
+              type: integer
+              minimum: 1
+            total_tokens:
+              type: integer
+              minimum: 1
+              description: Equal to prompt_tokens.
+    AnthropicTextBlock:
+      type: object
+      additionalProperties: false
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: string
+          minLength: 1
+    AnthropicToolUseBlock:
+      type: object
+      additionalProperties: false
+      required: [type, id, name, input]
+      properties:
+        type:
+          type: string
+          enum: [tool_use]
+        id:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        input:
+          type: object
+          additionalProperties: true
+    AnthropicTextContent:
+      oneOf:
+        - type: string
+          minLength: 1
+        - type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/AnthropicTextBlock'
+    AnthropicToolResultBlock:
+      type: object
+      additionalProperties: false
+      required: [type, tool_use_id]
+      properties:
+        type:
+          type: string
+          enum: [tool_result]
+        tool_use_id:
+          type: string
+          minLength: 1
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                $ref: '#/components/schemas/AnthropicTextBlock'
+        is_error:
+          type: boolean
+          default: false
+    AnthropicMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [model, messages, max_tokens]
+      properties:
+        model:
+          type: string
+          minLength: 1
+        max_tokens:
+          type: integer
+          minimum: 1
+          description: Must not exceed the configured maximum; zero/cache warming is unsupported.
+        messages:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [role, content]
+            properties:
+              role:
+                type: string
+                enum: [user, assistant]
+              content:
+                oneOf:
+                  - type: string
+                    minLength: 1
+                  - type: array
+                    minItems: 1
+                    items:
+                      oneOf:
+                        - $ref: '#/components/schemas/AnthropicTextBlock'
+                        - $ref: '#/components/schemas/AnthropicToolUseBlock'
+                        - $ref: '#/components/schemas/AnthropicToolResultBlock'
+        system:
+          $ref: '#/components/schemas/AnthropicTextContent'
+        stream:
+          type: boolean
+          default: false
+        tools:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, input_schema]
+            properties:
+              type:
+                type: string
+                enum: [custom]
+              name:
+                type: string
+                pattern: '^[a-zA-Z0-9_-]{1,64}$'
+              description:
+                type: string
+              input_schema:
+                type: object
+                required: [type]
+                properties:
+                  type:
+                    type: string
+                    enum: [object]
+                additionalProperties: true
+              strict:
+                type: boolean
+                enum: [false]
+                description: Full schema enforcement is unsupported.
+        tool_choice:
+          type: object
+          additionalProperties: false
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [auto, none, any, tool]
+            name:
+              type: string
+              description: Required only for type tool; must match a provided tool.
+            disable_parallel_tool_use:
+              type: boolean
+              default: false
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Validated but otherwise ignored.
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Validated but otherwise ignored.
+        top_k:
+          type: integer
+          minimum: 0
+          description: Validated but otherwise ignored.
+        metadata:
+          type: object
+          additionalProperties: false
+          properties:
+            user_id:
+              type: string
+              nullable: true
+        stop_sequences:
+          type: array
+          maxItems: 0
+          items:
+            type: string
+    AnthropicUsage:
+      type: object
+      required: [input_tokens, output_tokens]
+      properties:
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+    AnthropicMessage:
+      type: object
+      required: [id, type, role, model, content, stop_reason, stop_sequence, usage]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [message]
+        role:
+          type: string
+          enum: [assistant]
+        model:
+          type: string
+        content:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/AnthropicTextBlock'
+              - $ref: '#/components/schemas/AnthropicToolUseBlock'
+        stop_reason:
+          type: string
+          enum: [max_tokens, tool_use]
+        stop_sequence:
+          type: string
+          nullable: true
+          description: Always null for this subset.
+        usage:
+          $ref: '#/components/schemas/AnthropicUsage'
+    ChatCompletionRequest:
+      type: object
+      required:
+        - model
+        - messages
+      properties:
+        model:
+          type: string
+          description: ID of the registered model.
+          example: mock-chat-model
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ChatCompletionMessage'
+        response_format:
+          $ref: '#/components/schemas/ChatOutputFormat'
+        max_completion_tokens:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Generated word count for plain text; a ceiling of simulated tokens (four UTF-8 bytes each) for structured text.
+        max_tokens:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Legacy alias for max_completion_tokens. Do not send both.
+        seed:
+          type: integer
+          format: int64
+          description: Seed for deterministic pseudo-random output.
+        stream:
+          type: boolean
+          default: false
+          description: Return the completion as a server-sent event stream.
+        stream_options:
+          $ref: '#/components/schemas/StreamOptions'
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatFunctionTool'
+        tool_choice:
+          description: Defaults to auto. A named choice must refer to a supplied tool.
+          oneOf:
+            - type: string
+              enum: [none, auto, required]
+            - type: object
+              required: [type, function]
+              properties:
+                type:
+                  type: string
+                  enum: [function]
+                function:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+        parallel_tool_calls:
+          type: boolean
+          default: true
+          description: When false, selected function output contains exactly one call.
+    ChatFunctionTool:
+      type: object
+      required: [type, function]
+      properties:
+        type:
+          type: string
+          enum: [function]
+        function:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+              minLength: 1
+            description:
+              type: string
+              nullable: true
+            parameters:
+              type: object
+              nullable: true
+              additionalProperties: true
+              description: Best-effort JSON Schema subset shared with Responses.
+            strict:
+              type: boolean
+              nullable: true
+              description: Accepted but does not enable strict schema enforcement.
+    ChatToolCall:
+      type: object
+      required: [id, type, function]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [function]
+        function:
+          type: object
+          required: [name, arguments]
+          properties:
+            name:
+              type: string
+            arguments:
+              type: string
+              description: A complete JSON argument string; SSE sends incremental fragments.
+    ChatCompletionMessage:
+      type: object
+      required:
+        - role
+      properties:
+        role:
+          type: string
+          description: Message role, such as user or assistant.
+        content:
+          type: string
+          nullable: true
+          description: Null for generated assistant calls; tool result messages require a string.
+        tool_calls:
+          type: array
+          description: Function calls on assistant messages.
+          items:
+            $ref: '#/components/schemas/ChatToolCall'
+        tool_call_id:
+          type: string
+          description: Required on role=tool messages; must match an earlier assistant call.
+    StreamOptions:
+      type: object
+      description: Options that apply only when stream is true.
+      properties:
+        include_usage:
+          type: boolean
+          default: false
+          description: Include a final SSE event containing token usage.
+    ChatCompletionResponse:
+      type: object
+      required:
+        - id
+        - object
+        - created
+        - model
+        - choices
+        - usage
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: chat.completion
+        created:
+          type: integer
+          format: int64
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatCompletionChoice'
+        usage:
+          $ref: '#/components/schemas/Usage'
+    ChatCompletionChoice:
+      type: object
+      required:
+        - index
+        - message
+        - logprobs
+        - finish_reason
+      properties:
+        index:
+          type: integer
+        message:
+          $ref: '#/components/schemas/ChatCompletionMessage'
+        logprobs:
+          nullable: true
+        finish_reason:
+          type: string
+          enum: [stop, length, tool_calls]
+          example: stop
+    Usage:
+      type: object
+      required:
+        - prompt_tokens
+        - completion_tokens
+        - total_tokens
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+    ResponseRequest:
+      type: object
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          description: ID of the model shared with Chat Completions.
+          example: mock-chat-model
+        input:
+          description: A user string or ordered array of supported conversation items.
+          oneOf:
+            - type: string
+            - type: array
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/ResponseInputItem'
+        instructions:
+          type: string
+          nullable: true
+          description: Prepended as a developer message for this generation only; not inherited by continuations.
+        max_output_tokens:
+          type: integer
+          format: int32
+          minimum: 16
+          description: Generated word count for plain text; a ceiling of simulated tokens (four UTF-8 bytes each) for structured text.
+        stream:
+          type: boolean
+          default: false
+          description: Return Open Responses server-sent events.
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: String metadata echoed on every Response resource.
+        store:
+          type: boolean
+          default: true
+          description: Save a complete or terminal incomplete Response in the bounded process-local continuation store.
+        previous_response_id:
+          type: string
+          nullable: true
+          pattern: '^resp_mock_[0-9a-f]{32}$'
+          description: |
+            Opaque ID of a complete or terminal incomplete, stored Response using the same model and process.
+            IDs become unavailable after expiry, FIFO eviction, or process restart. IDs
+            returned with `store: false` and failed or interrupted stream IDs are absent.
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResponseFunctionToolInput'
+          description: Function tools available for deterministic selection.
+        tool_choice:
+          type: string
+          enum:
+            - none
+            - auto
+            - required
+          default: auto
+          description: Selects text only, deterministic text/tool choice, or required calls.
+        parallel_tool_calls:
+          type: boolean
+          default: true
+          description: Allows more than one distinct call when the tool branch is selected.
+        max_tool_calls:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Optional cap on calls selected from the supplied function tools.
+        reasoning:
+          type: object
+          nullable: true
+          description: Top-level reasoning controls are accepted and ignored by the mock.
+        text:
+          $ref: '#/components/schemas/ResponseTextRequestConfig'
+        background:
+          type: boolean
+          description: Accepted and ignored; execution is always synchronous or SSE foreground.
+        service_tier:
+          type: string
+          description: Accepted and ignored; responses report the default tier.
+        temperature:
+          type: number
+          description: Accepted and ignored by deterministic generation.
+        top_p:
+          type: number
+          description: Accepted and ignored by deterministic generation.
+    ResponseFunctionToolInput:
+      type: object
+      required:
+        - type
+        - name
+      properties:
+        type:
+          type: string
+          enum:
+            - function
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+          nullable: true
+        parameters:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: JSON Schema used for best-effort deterministic argument synthesis.
+        strict:
+          type: boolean
+          nullable: true
+          description: Accepted for compatibility; effective output always reports false.
+    ResponseInputItem:
+      description: One ordered item contributing to the mock conversation digest.
+      oneOf:
+        - $ref: '#/components/schemas/ResponseInputMessage'
+        - $ref: '#/components/schemas/ResponseInputFunctionCall'
+        - $ref: '#/components/schemas/ResponseInputFunctionCallOutput'
+        - $ref: '#/components/schemas/ResponseInputReasoning'
+    ResponseInputMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        type:
+          type: string
+          enum:
+            - message
+          default: message
+        role:
+          type: string
+          enum:
+            - user
+            - system
+            - developer
+            - assistant
+        phase:
+          type: string
+          description: Accepted for compatibility and does not affect mock generation.
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                $ref: '#/components/schemas/ResponseInputContentPart'
+    ResponseInputFunctionCall:
+      type: object
+      required:
+        - type
+        - call_id
+        - name
+        - arguments
+      properties:
+        type:
+          type: string
+          enum:
+            - function_call
+        call_id:
+          type: string
+        name:
+          type: string
+        arguments:
+          type: string
+          description: JSON argument text; it is digested as supplied and is not executed.
+    ResponseInputFunctionCallOutput:
+      type: object
+      required:
+        - type
+        - call_id
+        - output
+      properties:
+        type:
+          type: string
+          enum:
+            - function_call_output
+        call_id:
+          type: string
+        output:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                $ref: '#/components/schemas/ResponseFunctionCallOutputContentPart'
+    ResponseInputReasoning:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - reasoning
+        summary:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResponseReasoningSummaryPart'
+        encrypted_content:
+          type: string
+          nullable: true
+          description: Opaque reasoning state included in the digest when supplied.
+    ResponseReasoningSummaryPart:
+      type: object
+      required:
+        - type
+        - text
+      properties:
+        type:
+          type: string
+          enum:
+            - summary_text
+        text:
+          type: string
+    ResponseFunctionCallOutputContentPart:
+      type: object
+      required:
+        - type
+        - text
+      properties:
+        type:
+          type: string
+          enum:
+            - input_text
+        text:
+          type: string
+    ResponseInputContentPart:
+      type: object
+      description: Text parts are concatenated in order; non-text message parts are ignored.
+      properties:
+        type:
+          type: string
+        text:
+          type: string
+        refusal:
+          type: string
+    ResponseResource:
+      type: object
+      required:
+        - id
+        - object
+        - created_at
+        - completed_at
+        - status
+        - incomplete_details
+        - model
+        - previous_response_id
+        - instructions
+        - output
+        - error
+        - tools
+        - tool_choice
+        - truncation
+        - parallel_tool_calls
+        - text
+        - top_p
+        - presence_penalty
+        - frequency_penalty
+        - top_logprobs
+        - temperature
+        - reasoning
+        - usage
+        - max_output_tokens
+        - max_tool_calls
+        - store
+        - background
+        - service_tier
+        - metadata
+        - safety_identifier
+        - prompt_cache_key
+      properties:
+        id:
+          type: string
+          pattern: '^resp_mock_[0-9a-f]{32}$'
+          description: Opaque identifier generated from 128 random bits.
+        object:
+          type: string
+          enum:
+            - response
+        created_at:
+          type: integer
+          format: int64
+        completed_at:
+          type: integer
+          format: int64
+          nullable: true
+        status:
+          type: string
+          enum:
+            - in_progress
+            - completed
+            - incomplete
+            - failed
+        incomplete_details:
+          type: object
+          nullable: true
+          description: Null unless a structured output reaches its token ceiling.
+          required: [reason]
+          properties:
+            reason:
+              type: string
+              enum: [max_output_tokens]
+        model:
+          type: string
+        previous_response_id:
+          type: string
+          nullable: true
+          description: Echoes the continuation ID supplied by the request.
+        instructions:
+          type: string
+          nullable: true
+        output:
+          type: array
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/ResponseOutputMessage'
+              - $ref: '#/components/schemas/ResponseFunctionCall'
+        error:
+          type: object
+          nullable: true
+          additionalProperties: true
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResponseFunctionTool'
+        tool_choice:
+          type: string
+          enum:
+            - none
+            - auto
+            - required
+        truncation:
+          type: string
+          enum:
+            - disabled
+        parallel_tool_calls:
+          type: boolean
+        text:
+          $ref: '#/components/schemas/ResponseTextConfig'
+        top_p:
+          type: number
+        presence_penalty:
+          type: number
+        frequency_penalty:
+          type: number
+        top_logprobs:
+          type: integer
+        temperature:
+          type: number
+        reasoning:
+          type: object
+          nullable: true
+        usage:
+          allOf:
+            - $ref: '#/components/schemas/ResponseUsage'
+          nullable: true
+        max_output_tokens:
+          type: integer
+          nullable: true
+        max_tool_calls:
+          type: integer
+          nullable: true
+        store:
+          type: boolean
+        background:
+          type: boolean
+        service_tier:
+          type: string
+          enum:
+            - default
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        safety_identifier:
+          type: string
+          nullable: true
+        prompt_cache_key:
+          type: string
+          nullable: true
+    ResponseFunctionTool:
+      type: object
+      required:
+        - type
+        - name
+        - description
+        - parameters
+        - strict
+      properties:
+        type:
+          type: string
+          enum:
+            - function
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        parameters:
+          type: object
+          nullable: true
+          additionalProperties: true
+        strict:
+          type: boolean
+          enum:
+            - false
+    ResponseOutputMessage:
+      type: object
+      required:
+        - id
+        - type
+        - status
+        - role
+        - content
+      properties:
+        id:
+          type: string
+          pattern: '^msg-mock-'
+        type:
+          type: string
+          enum:
+            - message
+        status:
+          type: string
+          enum:
+            - in_progress
+            - completed
+            - incomplete
+        role:
+          type: string
+          enum:
+            - assistant
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResponseOutputText'
+    ResponseOutputText:
+      type: object
+      required:
+        - type
+        - text
+        - annotations
+      properties:
+        type:
+          type: string
+          enum:
+            - output_text
+        text:
+          type: string
+        annotations:
+          type: array
+          items:
+            type: object
+    ResponseFunctionCall:
+      type: object
+      required:
+        - id
+        - type
+        - status
+        - call_id
+        - name
+        - arguments
+      properties:
+        id:
+          type: string
+          pattern: '^fc_mock_'
+        type:
+          type: string
+          enum:
+            - function_call
+        status:
+          type: string
+          enum:
+            - in_progress
+            - completed
+        call_id:
+          type: string
+          pattern: '^call_mock_'
+        name:
+          type: string
+        arguments:
+          type: string
+          description: Deterministic JSON-encoded arguments synthesized from the tool schema.
+    TextOutputFormat:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [text]
+    JSONObjectOutputFormat:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [json_object]
+    StructuredSchemaConfig:
+      type: object
+      required: [name, schema]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        description:
+          type: string
+        strict:
+          type: boolean
+          nullable: true
+          default: false
+          description: Every object must forbid additional properties and require every declared property when true.
+        schema:
+          type: object
+          description: |
+            Bounded JSON Schema subset; root object, primitives, nullable types, arrays,
+            scalar enum/const, bounds, nested anyOf, and acyclic local refs under $defs.
+            Unsupported constraints and contradictions return HTTP 400. See
+            structured-output.md for all supported keywords and resource limits.
+    ChatOutputFormat:
+      oneOf:
+        - $ref: '#/components/schemas/TextOutputFormat'
+        - $ref: '#/components/schemas/JSONObjectOutputFormat'
+        - type: object
+          additionalProperties: false
+          required: [type, json_schema]
+          properties:
+            type:
+              type: string
+              enum: [json_schema]
+            json_schema:
+              $ref: '#/components/schemas/StructuredSchemaConfig'
+    ResponseOutputFormat:
+      oneOf:
+        - $ref: '#/components/schemas/TextOutputFormat'
+        - $ref: '#/components/schemas/JSONObjectOutputFormat'
+        - allOf:
+            - $ref: '#/components/schemas/StructuredSchemaConfig'
+            - type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  enum: [json_schema]
+    ResponseTextRequestConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        format:
+          $ref: '#/components/schemas/ResponseOutputFormat'
+        verbosity:
+          description: Accepted and ignored.
+    ResponseTextConfig:
+      type: object
+      required: [format]
+      properties:
+        format:
+          $ref: '#/components/schemas/ResponseOutputFormat'
+    ResponseUsage:
+      type: object
+      required:
+        - input_tokens
+        - input_tokens_details
+        - output_tokens
+        - output_tokens_details
+        - total_tokens
+      properties:
+        input_tokens:
+          type: integer
+          description: Cumulative deterministic estimate for all context items in this continuation.
+        input_tokens_details:
+          type: object
+          required:
+            - cached_tokens
+          properties:
+            cached_tokens:
+              type: integer
+              enum:
+                - 0
+        output_tokens:
+          type: integer
+        output_tokens_details:
+          type: object
+          required:
+            - reasoning_tokens
+          properties:
+            reasoning_tokens:
+              type: integer
+              enum:
+                - 0
+        total_tokens:
+          type: integer
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - message
+            - type
+            - param
+            - code
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            param:
+              type: string
+              nullable: true
+            code:
+              type: string
+              nullable: true

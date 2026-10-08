@@ -1,0 +1,21 @@
+{
+  "name": "smoke",
+  "url": "http://127.0.0.1:8080/v1/chat/completions",
+  "metrics_url": "http://127.0.0.1:6060/debug/metrics",
+  "connections": 16,
+  "ramp_up": "250ms",
+  "duration": "2s",
+  "request": {
+    "model": "mock-chat-model",
+    "prompt": "benchmark smoke test",
+    "max_completion_tokens": 4096,
+    "seed": 42,
+    "include_usage": true
+  },
+  "server_env": {
+    "PPROF_ADDR": "127.0.0.1:6060",
+    "SSE_DELAY": "100ms",
+    "SSE_TOKENS_PER_CHUNK": "1",
+    "MAX_COMPLETION_TOKENS": "4096"
+  }
+}

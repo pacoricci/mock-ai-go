@@ -1,0 +1,16 @@
+.git
+.gitignore
+.dockerignore
+.env
+.env.*
+!.env.example
+bin/
+coverage.*
+*.out
+bench/results/
+bench/
+third_party/
+tests/
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,16 @@
+{
+  "name": "responses-smoke",
+  "protocol": "responses",
+  "url": "http://127.0.0.1:8080/v1/responses",
+  "metrics_url": "http://127.0.0.1:6060/debug/metrics",
+  "connections": 10,
+  "ramp_up": "250ms",
+  "duration": "5s",
+  "request": {
+    "model": "mock-chat-model",
+    "prompt": "Write one sentence about a deterministic amber orbit.",
+    "max_completion_tokens": 64,
+    "seed": 42,
+    "include_usage": true
+  }
+}

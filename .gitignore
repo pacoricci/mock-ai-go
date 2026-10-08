@@ -1,0 +1,19 @@
+# Binaries and test artifacts
+/bin/
+*.out
+coverage.*
+bench/results/*.json
+bench/results/*.pprof
+bench/results/*.tsv
+output/playwright/
+.playwright-cli/
+
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
