@@ -2,7 +2,11 @@
 
 Use `http://localhost:8080/v1` as the SDK base URL, a dummy key, and
 `mock-chat-model`. See [OpenAPI](openapi.yaml) for request fields and errors.
-Text is deterministic for the same request and seed; JSON and SSE agree.
+Plain text defaults to 128–512 words, capped by the request's output-token limit.
+Chat Completions reproduces length and content for the same request with an explicit
+`seed`; JSON and SSE agree. Without a seed, repeated generations may differ in
+length and content. Responses does not expose a seed field.
+See [text length configuration](configuration.md#text-length) for fixed-size mode.
 
 ## Chat Completions
 

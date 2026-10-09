@@ -17,6 +17,8 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("EMBEDDING_DIMENSIONS", "256")
 	t.Setenv("DEFAULT_COMPLETION_TOKENS", "24")
 	t.Setenv("MAX_COMPLETION_TOKENS", "2048")
+	t.Setenv("TEXT_MIN_TOKENS", "128")
+	t.Setenv("TEXT_MAX_TOKENS", "256")
 	t.Setenv("SSE_TOKENS_PER_CHUNK", "3")
 	t.Setenv("SSE_DELAY", "25ms")
 	t.Setenv("SSE_DELAY_JITTER", "5ms")
@@ -38,6 +40,8 @@ func TestFromEnv(t *testing.T) {
 		EmbeddingDimensions:     256,
 		DefaultCompletionTokens: 24,
 		MaxCompletionTokens:     2048,
+		MinTextTokens:           128,
+		MaxTextTokens:           256,
 		StreamTokensPerChunk:    3,
 		StreamDelay:             25 * time.Millisecond,
 		StreamDelayJitter:       5 * time.Millisecond,
@@ -61,6 +65,8 @@ func TestFromEnvUsesDefault(t *testing.T) {
 		"EMBEDDING_DIMENSIONS",
 		"DEFAULT_COMPLETION_TOKENS",
 		"MAX_COMPLETION_TOKENS",
+		"TEXT_MIN_TOKENS",
+		"TEXT_MAX_TOKENS",
 		"SSE_TOKENS_PER_CHUNK",
 		"SSE_DELAY",
 		"SSE_DELAY_JITTER",
@@ -85,6 +91,8 @@ func TestFromEnvUsesDefault(t *testing.T) {
 		EmbeddingDimensions:     embedding.DefaultDimensions,
 		DefaultCompletionTokens: defaultCompletionTokens,
 		MaxCompletionTokens:     defaultMaxCompletionTokens,
+		MinTextTokens:           defaultMinTextTokens,
+		MaxTextTokens:           defaultMaxTextTokens,
 		StreamTokensPerChunk:    defaultStreamTokensPerChunk,
 		StreamDelay:             100 * time.Millisecond,
 		StreamDelayJitter:       20 * time.Millisecond,
@@ -95,6 +103,18 @@ func TestFromEnvUsesDefault(t *testing.T) {
 	}
 	if cfg != want {
 		t.Fatalf("FromEnv() = %#v, want %#v", cfg, want)
+	}
+}
+
+func TestFromEnvAllowsDisablingTextLengthSampling(t *testing.T) {
+	t.Setenv("TEXT_MIN_TOKENS", "0")
+	t.Setenv("TEXT_MAX_TOKENS", "0")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinTextTokens != 0 || cfg.MaxTextTokens != 0 {
+		t.Fatalf("text range = %d..%d, want disabled", cfg.MinTextTokens, cfg.MaxTextTokens)
 	}
 }
 
@@ -124,6 +144,11 @@ func TestFromEnvRejectsInvalidValues(t *testing.T) {
 		{name: "embedding blank model", values: map[string]string{"EMBEDDING_MODEL_ID": " "}, message: "must not be blank"},
 		{name: "default tokens", values: map[string]string{"DEFAULT_COMPLETION_TOKENS": "zero"}, message: "DEFAULT_COMPLETION_TOKENS"},
 		{name: "max tokens", values: map[string]string{"MAX_COMPLETION_TOKENS": "0"}, message: "MAX_COMPLETION_TOKENS"},
+		{name: "negative text minimum", values: map[string]string{"TEXT_MIN_TOKENS": "-1"}, message: "TEXT_MIN_TOKENS"},
+		{name: "invalid text maximum", values: map[string]string{"TEXT_MAX_TOKENS": "many"}, message: "TEXT_MAX_TOKENS"},
+		{name: "reversed text range", values: map[string]string{"TEXT_MIN_TOKENS": "513"}, message: "ordered"},
+		{name: "text range exceeds max", values: map[string]string{"TEXT_MAX_TOKENS": "4097"}, message: "within MAX_COMPLETION_TOKENS"},
+		{name: "one zero text bound", values: map[string]string{"TEXT_MIN_TOKENS": "0"}, message: "both be zero"},
 		{name: "default exceeds max", values: map[string]string{"DEFAULT_COMPLETION_TOKENS": "10", "MAX_COMPLETION_TOKENS": "9"}, message: "must not exceed"},
 		{name: "chunk tokens", values: map[string]string{"SSE_TOKENS_PER_CHUNK": "-1"}, message: "SSE_TOKENS_PER_CHUNK"},
 		{name: "delay", values: map[string]string{"SSE_DELAY": "yesterday"}, message: "SSE_DELAY"},

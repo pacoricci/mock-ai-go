@@ -4,9 +4,11 @@ A lightweight Go server for testing LLM clients without calling a provider.
 Mocks OpenAI-compatible Chat Completions, Responses, and embeddings, plus
 Anthropic Messages. The service uses only the Go standard library.
 
-Supports deterministic output, JSON and SSE, function calling, structured
+Supports seeded reproducible text, JSON and SSE, function calling, structured
 output, and configurable streaming delays. Content and usage are synthetic;
 embeddings carry no semantic similarity, and functions are never executed.
+Plain text defaults to a variable 128–512 words, capped by request limits;
+see [configuration](docs/configuration.md#text-length) to adjust or disable sampling.
 
 ## Quick start
 

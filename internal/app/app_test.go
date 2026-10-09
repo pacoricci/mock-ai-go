@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -21,6 +22,8 @@ func TestStartExposesResolvedAddressesAndServesHTTP(t *testing.T) {
 		ModelID:                 "mock-chat-model",
 		DefaultCompletionTokens: 8,
 		MaxCompletionTokens:     64,
+		MinTextTokens:           4,
+		MaxTextTokens:           6,
 		StreamTokensPerChunk:    2,
 		ResponseStoreTTL:        time.Hour,
 		ResponseStoreMaxEntries: 1_000,
@@ -33,13 +36,35 @@ func TestStartExposesResolvedAddressesAndServesHTTP(t *testing.T) {
 		t.Fatalf("resolved addresses = %q, %q", server.HTTPAddress(), server.DiagnosticsAddress())
 	}
 
-	response, err := http.Get("http://" + server.HTTPAddress() + "/openapi.yaml")
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	response, err := client.Get("http://" + server.HTTPAddress() + "/openapi.yaml")
 	if err != nil {
 		t.Fatalf("GET OpenAPI document: %v", err)
 	}
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("GET OpenAPI status = %d", response.StatusCode)
+	}
+	completion, err := client.Post("http://"+server.HTTPAddress()+"/v1/chat/completions", "application/json",
+		strings.NewReader(`{"model":"mock-chat-model","messages":[{"role":"user","content":"Hello"}],"seed":42}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Choices []struct {
+			Message struct{ Content string }
+		}
+	}
+	decodeErr := json.NewDecoder(completion.Body).Decode(&result)
+	_ = completion.Body.Close()
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	if completion.StatusCode != http.StatusOK || len(result.Choices) != 1 {
+		t.Fatalf("completion status %d, result %+v", completion.StatusCode, result)
+	}
+	if count := len(strings.Fields(result.Choices[0].Message.Content)); count < 4 || count > 6 {
+		t.Fatalf("app text length = %d, want 4..6", count)
 	}
 
 	shutdownContext, cancel := context.WithTimeout(context.Background(), 3*time.Second)

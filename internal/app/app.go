@@ -35,6 +35,8 @@ func Start(output io.Writer, cfg config.Config) (*Server, error) {
 	chatModel, err := chat.NewMockModel(cfg.ModelID, chat.MockOptions{
 		DefaultCompletionTokens: cfg.DefaultCompletionTokens,
 		MaxCompletionTokens:     cfg.MaxCompletionTokens,
+		MinTextTokens:           cfg.MinTextTokens,
+		MaxTextTokens:           cfg.MaxTextTokens,
 		StreamTokensPerChunk:    cfg.StreamTokensPerChunk,
 		StreamDelay:             cfg.StreamDelay,
 		StreamDelayJitter:       cfg.StreamDelayJitter,

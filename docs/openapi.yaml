@@ -59,7 +59,9 @@ paths:
         Implements the documented Messages subset with the shared model registry.
         Requires anthropic-version 2023-06-01; beta headers are unsupported.
         API keys are ignored. The body limit is 1 MiB. Unknown fields are rejected.
-        Text produces exactly max_tokens simulated words and stops with max_tokens.
+        Text samples 128–512 simulated words by default, capped by max_tokens.
+        It stops with end_turn below that limit, or max_tokens when the limit is reached.
+        Length bounds are configurable; setting both to zero restores fixed sizes.
         Tools stop with tool_use. Insufficient tool budgets return 400 before SSE;
         partial tool JSON is not generated. Usage is a mock estimate.
         Auto selects text after tool results. Histories must start/end with user;
@@ -116,7 +118,10 @@ paths:
     post:
       summary: Create a chat completion or deterministic function call
       description: |
-        Uses the shared deterministic text and function planner. Tools use nested
+        Plain text samples 128–512 words by default, capped by the request token limit.
+        An explicit seed reproduces length and content across JSON and SSE; without
+        a seed, repeated generations may differ. Length bounds are configurable,
+        and setting both to zero restores fixed sizes. Tools use nested
         function definitions. Selection supports none, auto, required, and a named
         function; parallel calls default to enabled. Function calls are returned,
         never executed. Tool argument JSON Schema support is best-effort, including
@@ -171,7 +176,9 @@ paths:
       summary: Create a text response or deterministic function call
       description: |
         Implements the synchronous JSON and SSE text and function-tool subset of Open Responses.
-        Both modes use the same deterministic model as Chat Completions.
+        Plain text samples 128–512 words by default, capped by max_output_tokens.
+        JSON and SSE share sampling rules, but separate requests may differ.
+        Length bounds are configurable; setting both to zero restores fixed sizes.
 
         Function calls are returned but never executed. `tool_choice` supports `none`,
         `auto`, and `required`; auto uses a stable 50/50 text/tool distribution when
@@ -537,7 +544,7 @@ components:
         max_tokens:
           type: integer
           minimum: 1
-          description: Must not exceed the configured maximum; zero/cache warming is unsupported.
+          description: Ceiling on sampled plain-text words or complete tool usage. Must not exceed MAX_COMPLETION_TOKENS; zero/cache warming is unsupported.
         messages:
           type: array
           minItems: 1
@@ -664,7 +671,7 @@ components:
               - $ref: '#/components/schemas/AnthropicToolUseBlock'
         stop_reason:
           type: string
-          enum: [max_tokens, tool_use]
+          enum: [end_turn, max_tokens, tool_use]
         stop_sequence:
           type: string
           nullable: true
@@ -692,7 +699,7 @@ components:
           type: integer
           format: int32
           minimum: 1
-          description: Generated word count for plain text; a ceiling of simulated tokens (four UTF-8 bytes each) for structured text.
+          description: Ceiling on sampled words for plain text; a ceiling of simulated tokens (four UTF-8 bytes each) for structured text. Defaults to the configured text range for plain text, or DEFAULT_COMPLETION_TOKENS for structured text.
         max_tokens:
           type: integer
           format: int32
@@ -701,7 +708,7 @@ components:
         seed:
           type: integer
           format: int64
-          description: Seed for deterministic pseudo-random output.
+          description: Seed for reproducible plain-text length and content, or deterministic structured output and tool planning.
         stream:
           type: boolean
           default: false
@@ -888,7 +895,7 @@ components:
           type: integer
           format: int32
           minimum: 16
-          description: Generated word count for plain text; a ceiling of simulated tokens (four UTF-8 bytes each) for structured text.
+          description: Ceiling on sampled words for plain text; a ceiling of simulated tokens (four UTF-8 bytes each) for structured text. Defaults to the configured text range for plain text, or DEFAULT_COMPLETION_TOKENS for structured text.
         stream:
           type: boolean
           default: false

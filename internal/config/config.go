@@ -16,6 +16,8 @@ const (
 	defaultModelID              = "mock-chat-model"
 	defaultCompletionTokens     = 32
 	defaultMaxCompletionTokens  = 4096
+	defaultMinTextTokens        = 128
+	defaultMaxTextTokens        = 512
 	defaultStreamTokensPerChunk = 4
 	defaultStreamDelay          = 100 * time.Millisecond
 	defaultStreamDelayJitter    = 20 * time.Millisecond
@@ -35,6 +37,8 @@ type Config struct {
 	EmbeddingDimensions     int
 	DefaultCompletionTokens int
 	MaxCompletionTokens     int
+	MinTextTokens           int
+	MaxTextTokens           int
 	StreamTokensPerChunk    int
 	StreamDelay             time.Duration
 	StreamDelayJitter       time.Duration
@@ -56,6 +60,18 @@ func FromEnv() (Config, error) {
 	}
 	if defaultTokens > maxTokens {
 		return Config{}, fmt.Errorf("DEFAULT_COMPLETION_TOKENS must not exceed MAX_COMPLETION_TOKENS")
+	}
+	minTextTokens, err := nonNegativeIntFromEnv("TEXT_MIN_TOKENS", defaultMinTextTokens)
+	if err != nil {
+		return Config{}, err
+	}
+	maxTextTokens, err := nonNegativeIntFromEnv("TEXT_MAX_TOKENS", defaultMaxTextTokens)
+	if err != nil {
+		return Config{}, err
+	}
+	if (minTextTokens != 0 || maxTextTokens != 0) &&
+		(minTextTokens == 0 || maxTextTokens < minTextTokens || maxTextTokens > maxTokens) {
+		return Config{}, fmt.Errorf("TEXT_MIN_TOKENS and TEXT_MAX_TOKENS must both be zero or positive, ordered, and within MAX_COMPLETION_TOKENS")
 	}
 	streamTokens, err := positiveIntFromEnv("SSE_TOKENS_PER_CHUNK", defaultStreamTokensPerChunk)
 	if err != nil {
@@ -110,6 +126,8 @@ func FromEnv() (Config, error) {
 		ModelID:                 envOrDefault("MODEL_ID", defaultModelID),
 		DefaultCompletionTokens: defaultTokens,
 		MaxCompletionTokens:     maxTokens,
+		MinTextTokens:           minTextTokens,
+		MaxTextTokens:           maxTextTokens,
 		StreamTokensPerChunk:    streamTokens,
 		StreamDelay:             streamDelay,
 		StreamDelayJitter:       streamDelayJitter,
@@ -118,6 +136,18 @@ func FromEnv() (Config, error) {
 		ResponseStoreMaxEntries: responseStoreMaxEntries,
 		ResponseStoreMaxBytes:   responseStoreMaxBytes,
 	}, nil
+}
+
+func nonNegativeIntFromEnv(name string, fallback int) (int, error) {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a nonnegative integer", name)
+	}
+	return parsed, nil
 }
 
 func positiveInt64FromEnv(name string, fallback int64) (int64, error) {

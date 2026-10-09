@@ -23,6 +23,9 @@ inside either SDK module for its race checks. The first run downloads dependenci
 Both check JSON/SSE content and usage agreement, event ordering, Unicode argument
 fragments, parallel and named tools, replay with reordered results, concurrent
 histories, and failure/cancellation behavior.
+SDK fixtures use fixed-size text generation. Service HTTP tests additionally
+cover sampled word counts and request ceilings across all three text APIs in
+JSON and SSE, seeded Chat agreement, and Anthropic terminal reasons.
 
 OpenAI tests additionally cover token boundaries, schema validation, continuation
 across JSON/SSE, branching, store expiry/eviction/model isolation, stateless

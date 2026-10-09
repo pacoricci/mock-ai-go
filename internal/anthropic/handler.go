@@ -131,7 +131,8 @@ func completeMessage(w http.ResponseWriter, r *http.Request, requestID string, r
 			return
 		}
 		response.Content = append(response.Content, textBlock{Type: "text", Text: completion.Content})
-		usage, reason = completion.Usage, "max_tokens"
+		usage = completion.Usage
+		reason = textStopReason(request, usage)
 	} else {
 		for _, call := range plan.Calls {
 			var input map[string]any
@@ -145,6 +146,13 @@ func completeMessage(w http.ResponseWriter, r *http.Request, requestID string, r
 	response.StopReason = &reason
 	response.Usage = toUsage(usage)
 	writeJSON(w, http.StatusOK, response)
+}
+
+func textStopReason(request chat.Request, usage chat.Usage) string {
+	if usage.CompletionTokens < request.MaxCompletionTokens {
+		return "end_turn"
+	}
+	return "max_tokens"
 }
 
 func toolID(call chat.ToolCall) string {

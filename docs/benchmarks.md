@@ -42,7 +42,10 @@ Unspecified settings retain defaults, even with a scenario's partial
 
 At four words per chunk, expected duration is approximately
 `800 ms + (ceil(output_words / 4) - 1) × 100 ms`, before jitter and backpressure:
-about 1.5 s for 32 words or 5.7 s for 200. Words are not tokenizer tokens.
+about 1.5 s for 32 words or 5.7 s for 200. The default 128–512-word text range
+takes approximately 3.9–13.5 s (mean 8.7 s). Request limits cap this range;
+disable text-length sampling when a benchmark needs exact output sizes.
+Words are not tokenizer tokens.
 This profile does not model prompt processing, reasoning, queuing, or bursts.
 
 Elapsed time starts after the initial diagnostics sample and ends when workers

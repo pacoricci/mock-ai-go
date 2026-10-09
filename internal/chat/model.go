@@ -15,9 +15,13 @@ type Message struct {
 
 // Request contains the input for a chat completion.
 type Request struct {
-	Messages            []Message
+	Messages []Message
+	// MaxCompletionTokens caps output. Zero selects the configured text range
+	// or default budget when length sampling is disabled or output is structured.
 	MaxCompletionTokens int
-	Seed                *int64
+	// Seed makes sampled plain-text length and content reproducible. Without a
+	// seed, enabled length sampling is independent for each generation call.
+	Seed *int64
 	// ContextState supplies aggregate conversation state. When it is
 	// non-nil, generation and usage use it instead of re-reading Messages.
 	ContextState *ContextState

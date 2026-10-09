@@ -1,6 +1,6 @@
 # Anthropic Messages
 
-`POST /v1/messages` supports deterministic text and client tools in JSON or SSE.
+`POST /v1/messages` supports text and deterministic client tools in JSON or SSE.
 Use SDK base URL `http://localhost:8080`, a dummy key, and header
 `anthropic-version: 2023-06-01`. Missing/other versions and nonempty
 `anthropic-beta` return 400. Authentication headers are ignored.
@@ -25,14 +25,19 @@ Use SDK base URL `http://localhost:8080`, a dummy key, and header
 Unknown fields and unsupported blocks return 400. Thinking, images, documents,
 citations, caching, structured output, server tools, toolsets, and beta features
 are unsupported. `strict: true` is rejected; tool schemas are best-effort.
-There is no `seed` field. Identical normalized context, tools, model, and budget
-reproduce content and usage, not message IDs or timing.
+There is no `seed` field. Plain-text length is sampled independently for each
+generation. Tool plans remain reproducible for identical normalized context,
+tools, model, and budget; message IDs and timing are independent.
 
 ## Text and tools
 
-Text produces exactly `max_tokens` mock words and ends with `max_tokens`.
-Natural `end_turn`, stop sequences, refusals, and reasoning are not simulated.
-JSON and reconstructed SSE content/usage agree; usage is not tokenizer output.
+Text samples 128–512 mock words by default, capped by `max_tokens`. Limits below
+128 produce exactly that many words. It ends with `end_turn` when output is
+shorter than the limit, or `max_tokens` when the limit is reached.
+Stop sequences, refusals, and reasoning are not simulated.
+JSON and SSE use the same sampling rules; separate requests may produce different
+lengths. Usage counts the words actually emitted and is not tokenizer output.
+See [configuration](configuration.md#text-length) to adjust or disable sampling.
 
 `none` selects text, `any` requires tools, `tool` selects the named tool, and
 `auto` deterministically chooses text or tools. After user tool results, `auto`

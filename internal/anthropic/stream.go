@@ -106,7 +106,7 @@ func streamMessage(w http.ResponseWriter, r *http.Request, requestID string, res
 				err = writer.event(streamEvent{Type: "content_block_stop", Index: &index})
 			}
 		}
-		reason = "max_tokens"
+		reason = textStopReason(request, usage)
 	} else {
 		err = model.StreamTools(r.Context(), request, plan, func(chunk chat.ToolChunk) error {
 			if chunk.Index < 0 || chunk.Index >= len(plan.Calls) {

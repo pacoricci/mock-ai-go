@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ const (
 	fnvPrime                    = 1_099_511_628_211
 	estimatedBytesPerWord       = 8
 	temporalSeedSalt            = 0xd1b54a32d192ed03
+	textLengthSeedSalt          = 0x8ebc6af09c88c6e3
 )
 
 var (
@@ -25,6 +27,8 @@ var (
 	ErrInvalidDefaultCompletionTokens = errors.New("default completion tokens must be positive")
 	// ErrInvalidMaxCompletionTokens indicates an unusable output limit.
 	ErrInvalidMaxCompletionTokens = errors.New("max completion tokens is invalid")
+	// ErrInvalidTextTokenRange indicates an unusable plain-text output range.
+	ErrInvalidTextTokenRange = errors.New("text token range must be zero or positive, ordered, and within max completion tokens")
 	// ErrInvalidStreamChunkTokens indicates that a stream cannot make progress.
 	ErrInvalidStreamChunkTokens = errors.New("stream tokens per chunk must be positive")
 	// ErrInvalidStreamDelay indicates a negative stream delay.
@@ -41,29 +45,35 @@ var (
 	ErrNilEmit = errors.New("chat emit function is nil")
 )
 
-// MockOptions controls deterministic completion generation.
+// MockOptions controls completion generation and stream pacing.
 type MockOptions struct {
 	DefaultCompletionTokens int
 	MaxCompletionTokens     int
-	StreamTokensPerChunk    int
-	StreamDelay             time.Duration
-	StreamDelayJitter       time.Duration
-	StreamInitialDelay      time.Duration
+	// MinTextTokens and MaxTextTokens bound the sampled plain-text word count.
+	// Both zero disable sampling and use the request size or default instead.
+	MinTextTokens        int
+	MaxTextTokens        int
+	StreamTokensPerChunk int
+	StreamDelay          time.Duration
+	StreamDelayJitter    time.Duration
+	StreamInitialDelay   time.Duration
 }
 
-// MockModel generates deterministic pseudo-random text with xorshift64*.
+// MockModel generates pseudo-random text, reproducibly when a seed is supplied.
 // It is immutable and safe for concurrent use.
 type MockModel struct {
 	info                    model.Info
 	defaultCompletionTokens int
 	maxCompletionTokens     int
+	minTextTokens           int
+	maxTextTokens           int
 	streamTokensPerChunk    int
 	streamDelay             time.Duration
 	streamDelayJitter       time.Duration
 	streamInitialDelay      time.Duration
 }
 
-// NewMockModel constructs a deterministic pseudo-random chat model.
+// NewMockModel constructs a pseudo-random chat model.
 func NewMockModel(id string, options MockOptions) (*MockModel, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, ErrEmptyMockModelID
@@ -73,6 +83,10 @@ func NewMockModel(id string, options MockOptions) (*MockModel, error) {
 	}
 	if options.MaxCompletionTokens < options.DefaultCompletionTokens || options.MaxCompletionTokens > absoluteMaxCompletionTokens {
 		return nil, ErrInvalidMaxCompletionTokens
+	}
+	if (options.MinTextTokens != 0 || options.MaxTextTokens != 0) &&
+		(options.MinTextTokens <= 0 || options.MaxTextTokens < options.MinTextTokens || options.MaxTextTokens > options.MaxCompletionTokens) {
+		return nil, ErrInvalidTextTokenRange
 	}
 	if options.StreamTokensPerChunk <= 0 {
 		return nil, ErrInvalidStreamChunkTokens
@@ -94,6 +108,8 @@ func NewMockModel(id string, options MockOptions) (*MockModel, error) {
 		},
 		defaultCompletionTokens: options.DefaultCompletionTokens,
 		maxCompletionTokens:     options.MaxCompletionTokens,
+		minTextTokens:           options.MinTextTokens,
+		maxTextTokens:           options.MaxTextTokens,
 		streamTokensPerChunk:    options.StreamTokensPerChunk,
 		streamDelay:             options.StreamDelay,
 		streamDelayJitter:       options.StreamDelayJitter,
@@ -106,10 +122,10 @@ func (m *MockModel) Info() model.Info {
 	return m.info
 }
 
-// Complete generates the entire deterministic response in one allocation-sized
+// Complete generates the entire response in one allocation-sized
 // builder, as required by a non-streaming JSON response.
 func (m *MockModel) Complete(ctx context.Context, request Request) (Response, error) {
-	completionTokens, err := m.completionTokens(request)
+	completionTokens, err := m.textCompletionTokens(request)
 	if err != nil {
 		return Response{}, err
 	}
@@ -128,14 +144,14 @@ func (m *MockModel) Complete(ctx context.Context, request Request) (Response, er
 	}, nil
 }
 
-// Stream emits deterministic text incrementally. It keeps only the current
+// Stream emits text incrementally. It keeps only the current
 // chunk and PRNG state in memory and never starts an additional goroutine.
 func (m *MockModel) Stream(ctx context.Context, request Request, emit Emit) (Usage, error) {
 	if emit == nil {
 		return Usage{}, ErrNilEmit
 	}
 
-	completionTokens, err := m.completionTokens(request)
+	completionTokens, err := m.textCompletionTokens(request)
 	if err != nil {
 		return Usage{}, err
 	}
@@ -286,6 +302,24 @@ func applyJitterSample(delay, jitter time.Duration, sample uint64) time.Duration
 		return delay - magnitude
 	}
 	return delay + time.Duration(offset)
+}
+
+func (m *MockModel) textCompletionTokens(request Request) (int, error) {
+	budget, err := m.completionTokens(request)
+	if err != nil || m.minTextTokens == 0 {
+		return budget, err
+	}
+	upper := m.maxTextTokens
+	if request.MaxCompletionTokens > 0 {
+		upper = min(upper, budget)
+	}
+	lower := min(m.minTextTokens, upper)
+	span := upper - lower + 1
+	if request.Seed == nil {
+		return lower + rand.IntN(span), nil
+	}
+	random := newXorshift64Star(m.requestSeed(request, budget) ^ textLengthSeedSalt)
+	return lower + int(uniformUint64n(&random, uint64(span))), nil
 }
 
 func (m *MockModel) completionTokens(request Request) (int, error) {
