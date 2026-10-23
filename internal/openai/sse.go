@@ -3,7 +3,6 @@ package openai
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -59,7 +58,7 @@ func (h *Handler) streamChatCompletion(
 	streamNonce := h.sequence.Add(1)
 	domainRequest.StreamNonce = streamNonce
 	metadata := streamMetadata{
-		ID:      fmt.Sprintf("chatcmpl-mock-%d", streamNonce),
+		ID:      h.chatCompletionID(streamNonce),
 		Created: h.now().Unix(),
 		Model:   request.Model,
 	}

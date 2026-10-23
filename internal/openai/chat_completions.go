@@ -140,7 +140,7 @@ func (h *Handler) completeChatCompletion(
 	}
 
 	response := chatCompletionResponse{
-		ID:      fmt.Sprintf("chatcmpl-mock-%d", h.sequence.Add(1)),
+		ID:      h.chatCompletionID(h.sequence.Add(1)),
 		Object:  "chat.completion",
 		Created: h.now().Unix(),
 		Model:   request.Model,

@@ -52,7 +52,7 @@ func TestCreateChatCompletion(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.ID != "chatcmpl-mock-1" || response.Object != "chat.completion" {
+	if response.ID != handler.chatCompletionID(1) || response.Object != "chat.completion" {
 		t.Fatalf("response identity = %#v", response)
 	}
 	if response.Created != 1_700_000_000 || response.Model != "mock-chat-model" {

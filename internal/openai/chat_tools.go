@@ -164,7 +164,7 @@ func (h *Handler) completeChatTools(w http.ResponseWriter, request chatCompletio
 		calls[index] = chatToolCall{ID: call.CallID, Type: "function", Function: chatFunctionCall{Name: call.Name, Arguments: call.Arguments}}
 	}
 	writeJSON(w, chatCompletionResponse{
-		ID: fmt.Sprintf("chatcmpl-mock-%d", h.sequence.Add(1)), Object: "chat.completion", Created: h.now().Unix(), Model: request.Model,
+		ID: h.chatCompletionID(h.sequence.Add(1)), Object: "chat.completion", Created: h.now().Unix(), Model: request.Model,
 		Choices: []chatCompletionChoice{{Index: 0, Message: chatCompletionMessage{Role: "assistant", ToolCalls: calls}, FinishReason: "tool_calls"}}, Usage: toAPIUsage(plan.Usage),
 	})
 }

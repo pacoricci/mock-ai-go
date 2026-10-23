@@ -19,6 +19,10 @@ curl -N http://localhost:8080/v1/chat/completions \
 Omit `stream` for JSON. SSE ends with a finish choice, optional usage in an
 empty-choices chunk, and `[DONE]`.
 
+Chat completion IDs are opaque and include a random handler namespace, so
+separate processes and restarts do not reuse IDs. Every chunk of one stream
+shares its response ID. The namespace does not affect generated text or pacing.
+
 Tool responses contain `message.content: null`, `message.tool_calls`, and
 `finish_reason: "tool_calls"`. Replay the assistant message followed by one
 `{"role":"tool","tool_call_id":"…","content":"…"}` per result. Content must

@@ -24,13 +24,14 @@ const (
 
 // Handler serves the OpenAI-compatible HTTP API.
 type Handler struct {
-	chatModels    *chat.Registry
-	mux           *http.ServeMux
-	now           func() time.Time
-	sequence      atomic.Uint64
-	responseStore responseStore
-	responseTTL   time.Duration
-	newResponseID func() (string, error)
+	chatModels      *chat.Registry
+	mux             *http.ServeMux
+	now             func() time.Time
+	sequence        atomic.Uint64
+	chatIDNamespace string
+	responseStore   responseStore
+	responseTTL     time.Duration
+	newResponseID   func() (string, error)
 }
 
 // NewHandler constructs an OpenAI-compatible HTTP handler.
@@ -38,13 +39,18 @@ func NewHandler(chatModels *chat.Registry, storeOptions ResponseStoreOptions) (*
 	if chatModels == nil {
 		return nil, ErrNilChatRegistry
 	}
+	chatIDNamespace, err := generateResponseID()
+	if err != nil {
+		return nil, fmt.Errorf("create chat ID namespace: %w", err)
+	}
 
 	handler := &Handler{
-		chatModels:    chatModels,
-		mux:           http.NewServeMux(),
-		now:           time.Now,
-		responseTTL:   storeOptions.TTL,
-		newResponseID: generateResponseID,
+		chatModels:      chatModels,
+		mux:             http.NewServeMux(),
+		now:             time.Now,
+		responseTTL:     storeOptions.TTL,
+		newResponseID:   generateResponseID,
+		chatIDNamespace: strings.TrimPrefix(chatIDNamespace, responseIDPrefix),
 	}
 	store, err := newMemoryResponseStore(storeOptions, func() time.Time { return handler.now() })
 	if err != nil {
@@ -55,6 +61,12 @@ func NewHandler(chatModels *chat.Registry, storeOptions ResponseStoreOptions) (*
 	handler.mux.HandleFunc("POST /v1/responses", handler.createResponse)
 
 	return handler, nil
+}
+
+// Chat completion IDs remain unique across handlers, processes, and restarts.
+// Keep the existing sequence separate from the namespace so stream generation is unchanged.
+func (h *Handler) chatCompletionID(sequence uint64) string {
+	return fmt.Sprintf("chatcmpl-mock-%s-%d", h.chatIDNamespace, sequence)
 }
 
 func generateResponseID() (string, error) {

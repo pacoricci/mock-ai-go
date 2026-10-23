@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/pacoricci/mock-ai-go/internal/chat"
@@ -26,7 +25,7 @@ func (h *Handler) streamChatTools(w http.ResponseWriter, r *http.Request, reques
 	sequence := h.sequence.Add(1)
 	domain.StreamNonce = sequence
 	includeUsage := request.StreamOptions != nil && request.StreamOptions.IncludeUsage
-	encoder := newSSEEncoder(w, http.NewResponseController(w), streamMetadata{ID: fmt.Sprintf("chatcmpl-mock-%d", sequence), Created: h.now().Unix(), Model: request.Model}, includeUsage)
+	encoder := newSSEEncoder(w, http.NewResponseController(w), streamMetadata{ID: h.chatCompletionID(sequence), Created: h.now().Unix(), Model: request.Model}, includeUsage)
 	started := false
 	err := model.StreamTools(r.Context(), domain, plan, func(chunk chat.ToolChunk) error {
 		if !started {
